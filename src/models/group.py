@@ -32,6 +32,7 @@ class BaseGroup(SQLModel):
     managed: bool = Field(default=False)
     forward_url: Optional[str] = Field(default=None, nullable=True)
     notify_on_spam: bool = Field(default=False)
+    send_summary_to_self: bool = Field(default=False)
     community_keys: Optional[List[str]] = Field(
         default=None, sa_column=Column(ARRAY(String))
     )

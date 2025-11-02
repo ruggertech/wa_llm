@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import datetime, timedelta
 from enum import Enum
 
@@ -9,7 +10,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from voyageai.client_async import AsyncClient
 
 from handler.knowledge_base_answers import KnowledgeBaseAnswers
-from models import Message
+from models import Message, Group
 from whatsapp.jid import parse_jid
 from utils.chat_text import chat2text
 from whatsapp import WhatsAppClient
@@ -34,6 +35,56 @@ class Intent(BaseModel):
 - about: Learn about me(bot) and my capabilities. This will trigger the about section.
 - other:  something else. This will trigger the default response."""
     )
+
+
+def extract_message_count(text: str) -> int | None:
+    """Extract the number of messages requested from user's text.
+    
+    Handles formats like:
+    - "summarize last 5 messages"
+    - "סכם 3 הודעות"
+    - "תן לי סיכום של הודעה אחת"
+    
+    Returns None if no specific number is found.
+    """
+    # Hebrew number words
+    hebrew_numbers = {
+        'אחת': 1, 'אחד': 1,
+        'שתיים': 2, 'שניים': 2, 'שנים': 2,
+        'שלוש': 3, 'שלושה': 3,
+        'ארבע': 4, 'ארבעה': 4,
+        'חמש': 5, 'חמישה': 5,
+        'שש': 6, 'שישה': 6,
+        'שבע': 7, 'שבעה': 7,
+        'שמונה': 8, 'שמונה': 8,
+        'תשע': 9, 'תשעה': 9,
+        'עשר': 10, 'עשרה': 10,
+    }
+    
+    # English number words
+    english_numbers = {
+        'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5,
+        'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10,
+    }
+    
+    text_lower = text.lower()
+    
+    # Check for digit numbers (e.g., "5", "10")
+    digit_match = re.search(r'\b(\d+)\b', text)
+    if digit_match:
+        return int(digit_match.group(1))
+    
+    # Check Hebrew number words
+    for word, num in hebrew_numbers.items():
+        if word in text:
+            return num
+    
+    # Check English number words
+    for word, num in english_numbers.items():
+        if word in text_lower:
+            return num
+    
+    return None
 
 
 class Router(BaseHandler):
@@ -71,43 +122,150 @@ class Router(BaseHandler):
         return result.output.intent
 
     async def summarize(self, message: Message):
-        time_24_hours_ago = datetime.now() - timedelta(hours=24)
-        stmt = (
-            select(Message)
-            .where(Message.chat_jid == message.chat_jid)
-            .where(Message.timestamp >= time_24_hours_ago)
-            .order_by(desc(Message.timestamp))
-            .limit(30)
-        )
-        res = await self.session.exec(stmt)
-        messages: list[Message] = res.all()
-
-        agent = Agent(
-            model="anthropic:claude-sonnet-4-5-20250929",
-            system_prompt="""Summarize the following group chat messages in a few words.
+        from models import Group
+        
+        # Extract requested message count from user's text
+        requested_count = extract_message_count(message.text)
+        
+        # Check if this group has community_keys (linked to other groups)
+        if message.group and message.group.community_keys:
+            # Get all groups with matching community_keys
+            community_groups = await message.group.get_related_community_groups(self.session)
+            all_groups = [message.group] + list(community_groups)
             
-            - You MUST state that this is a summary of TODAY's messages. Even if the user asked for a summary of a different time period (in that case, state that you can only summarize today's messages)
-            - Always personalize the summary to the user's request
-            - Keep it short and conversational
-            - Tag users when mentioning them
-            - You MUST respond with the same language as the request
-            """,
-            output_type=str,
-        )
+            # Summarize each group
+            summaries = []
+            for group in all_groups:
+                # Skip groups with send_summary_to_self=True if not the current group
+                # (those are summary-receiving groups, not source groups)
+                if group.group_jid != message.chat_jid and group.send_summary_to_self:
+                    continue
+                    
+                time_24_hours_ago = datetime.now() - timedelta(hours=24)
+                stmt = (
+                    select(Message)
+                    .where(Message.chat_jid == group.group_jid)
+                    .where(Message.timestamp >= time_24_hours_ago)
+                    .order_by(desc(Message.timestamp))
+                    .limit(30)
+                )
+                res = await self.session.exec(stmt)
+                group_messages: list[Message] = res.all()
+                
+                # Limit messages if user specified a number
+                if requested_count:
+                    group_messages = group_messages[:requested_count]
+                    logger.info(f"User requested summary of {requested_count} messages for group {group.group_name}")
+                
+                if len(group_messages) < 1:  # Need at least one message
+                    continue
+                
+                # Build appropriate system prompt based on whether count was specified
+                if requested_count:
+                    system_prompt = f"""Summarize EXACTLY the last {requested_count} message(s) from "{group.group_name}" group.
+                    
+                    - Start by stating this is a summary of "{group.group_name}" group
+                    - Summarize ONLY the {requested_count} most recent message(s) - no more, no less
+                    - Be specific about what each message said
+                    - Keep it short and conversational
+                    - Tag users when mentioning them
+                    - You MUST respond with the same language as the messages
+                    """
+                else:
+                    system_prompt = f"""Summarize the following group chat messages in a few words.
+                    
+                    - Start by stating this is a summary of "{group.group_name}" group
+                    - Keep it short and conversational
+                    - Tag users when mentioning them
+                    - You MUST respond with the same language as the messages
+                    """
+                
+                agent = Agent(
+                    model="anthropic:claude-sonnet-4-5-20250929",
+                    system_prompt=system_prompt,
+                    output_type=str,
+                )
+                
+                try:
+                    response = await agent.run(chat2text(group_messages))
+                    summaries.append(f"📱 *{group.group_name}*:\n{response.output}")
+                except Exception as e:
+                    logging.error(f"Error summarizing group {group.group_name}: {e}")
+            
+            # Send all summaries
+            if summaries:
+                combined_summary = "\n\n".join(summaries)
+                await self.send_message(
+                    message.chat_jid,
+                    combined_summary,
+                    in_reply_to=message.message_id,
+                )
+            else:
+                await self.send_message(
+                    message.chat_jid,
+                    "No recent messages to summarize in the linked groups.",
+                    in_reply_to=message.message_id,
+                )
+        else:
+            # Original behavior: summarize only current group
+            # Extract requested message count from user's text
+            requested_count = extract_message_count(message.text)
+            
+            time_24_hours_ago = datetime.now() - timedelta(hours=24)
+            stmt = (
+                select(Message)
+                .where(Message.chat_jid == message.chat_jid)
+                .where(Message.timestamp >= time_24_hours_ago)
+                .order_by(desc(Message.timestamp))
+                .limit(30)
+            )
+            res = await self.session.exec(stmt)
+            messages: list[Message] = res.all()
+            
+            # Limit messages if user specified a number
+            if requested_count:
+                messages = messages[:requested_count]
+                logger.info(f"User requested summary of {requested_count} messages, limiting to that count")
+            
+            # Build appropriate system prompt based on whether count was specified
+            if requested_count:
+                system_prompt = f"""Summarize EXACTLY the last {requested_count} message(s) provided.
+                
+                - You MUST summarize ONLY the {requested_count} most recent message(s) - no more, no less
+                - Be specific about what each message said
+                - Keep it short and conversational
+                - Tag users when mentioning them
+                - You MUST respond with the same language as the request
+                """
+            else:
+                system_prompt = """Summarize the following group chat messages in a few words.
+                
+                - You MUST state that this is a summary of TODAY's messages. Even if the user asked for a summary of a different time period (in that case, state that you can only summarize today's messages)
+                - Always personalize the summary to the user's request
+                - Keep it short and conversational
+                - Tag users when mentioning them
+                - You MUST respond with the same language as the request
+                """
 
-        response = await agent.run(
-            f"@{parse_jid(message.sender_jid).user}: {message.text}\n\n # History:\n {chat2text(messages)}"
-        )
-        await self.send_message(
-            message.chat_jid,
-            response.output,
-            in_reply_to=message.message_id,
-        )
+            agent = Agent(
+                model="anthropic:claude-sonnet-4-5-20250929",
+                system_prompt=system_prompt,
+                output_type=str,
+            )
+
+            response = await agent.run(
+                f"@{parse_jid(message.sender_jid).user}: {message.text}\n\n # History:\n {chat2text(messages)}"
+            )
+            await self.send_message(
+                message.chat_jid,
+                response.output,
+                in_reply_to=message.message_id,
+            )
 
     async def about(self, message):
         await self.send_message(
             message.chat_jid,
-            "I'm an open-source bot created for the GenAI Israel community - https://llm.org.il.\nI can help you catch up on the chat messages and answer questions based on the group's knowledge.\nPlease send me PRs and star me at https://github.com/ilanbenb/wa_llm ⭐️",
+            "I'm an open source bot https://github.com/ilanbenb/wa_llm, I can help you catch up on the chat messages and answer questions based on the group's knowledge.",
             in_reply_to=message.message_id,
         )
 

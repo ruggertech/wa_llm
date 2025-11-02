@@ -35,7 +35,9 @@ class MessageHandler(BaseHandler):
         super().__init__(session, whatsapp, embedding_client)
 
     async def __call__(self, payload: WhatsAppWebhookPayload):
+        logger.info(f"🔄 MessageHandler called for payload from {payload.from_}")
         message = await self.store_message(payload)
+        logger.info(f"💾 Message stored: id={message.message_id if message else None}, has_text={bool(message and message.text)}, group={message.group.group_name if message and message.group else 'None'}")
 
         if (
             message
@@ -47,11 +49,13 @@ class MessageHandler(BaseHandler):
 
         # ignore messages that don't exist or don't have text
         if not message or not message.text:
+            logger.info(f"⏭️ Skipping: no message or no text")
             return
 
         # Ignore messages sent by the bot itself
         my_jid = await self.whatsapp.get_my_jid()
         if message.sender_jid == my_jid.normalize_str():
+            logger.info(f"⏭️ Skipping: message from bot itself")
             return
 
         if message.sender_jid.endswith("@lid"):
@@ -61,6 +65,7 @@ class MessageHandler(BaseHandler):
 
         # ignore messages from unmanaged groups
         if message and message.group and not message.group.managed:
+            logger.info(f"⏭️ Skipping: unmanaged group '{message.group.group_name}'")
             return
 
         # In-memory dedupe: if this message is already being processed/recently processed, skip
@@ -75,10 +80,13 @@ class MessageHandler(BaseHandler):
 
         mentioned = message.has_mentioned(my_jid)
         logging.info(
-            f"Mention check: msg={message.message_id} my={my_jid.user} contains=@{my_jid.user}? {mentioned}"
+            f"🔍 Mention check: msg={message.message_id} my={my_jid.user} text='{message.text[:50]}...' mentioned={mentioned}"
         )
         if mentioned:
+            logger.info(f"✅ Bot mentioned! Routing to handler...")
             await self.router(message)
+        else:
+            logger.info(f"⏭️ Bot not mentioned, skipping")
 
         # Handle whatsapp links in group
         if (

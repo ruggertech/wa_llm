@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     # Optional settings
     debug: bool = False
     log_level: str = "INFO"
-    logfire_token: str
+    logfire_token: Optional[str] = None
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -42,7 +42,7 @@ class Settings(BaseSettings):
         if self.anthropic_api_key:
             environ["ANTHROPIC_API_KEY"] = self.anthropic_api_key
 
-        if self.logfire_token:
-            environ["LOGFIRE_TOKEN"] = self.logfire_token
+        # if self.logfire_token:
+        #     environ["LOGFIRE_TOKEN"] = self.logfire_token
 
         return self

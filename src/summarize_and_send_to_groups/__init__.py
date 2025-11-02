@@ -45,36 +45,58 @@ async def summarize(group_name: str, messages: list[Message]) -> AgentRunResult[
 
 
 async def summarize_and_send_to_group(session, whatsapp: WhatsAppClient, group: Group):
+    try:
+        my_jid = await whatsapp.get_my_jid()
+        if not my_jid:
+            logging.warning(f"Could not get bot JID, skipping group {group.group_name}")
+            return
+        my_jid_str = my_jid.normalize_str()
+    except Exception as e:
+        logging.error(f"Error getting bot JID for group {group.group_name}: {e}")
+        return
+        
     resp = await session.exec(
         select(Message)
         .where(Message.group_jid == group.group_jid)
         .where(Message.timestamp >= group.last_summary_sync)
-        .where(Message.sender_jid != (await whatsapp.get_my_jid()).normalize_str())
+        .where(Message.sender_jid != my_jid_str)
         .order_by(desc(Message.timestamp))
     )
     messages: list[Message] = resp.all()
 
-    if len(messages) < 15:
+    if len(messages) < 5:
         logging.info("Not enough messages to summarize in group %s", group.group_name)
         return
 
     try:
         result = await summarize(group.group_name or "group", messages)
+        logging.info(f"Generated summary for {group.group_name}: {len(messages)} messages")
     except Exception as e:
         logging.error("Error summarizing group %s: %s", group.group_name, e)
         return
 
     try:
-        await whatsapp.send_message(
-            SendMessageRequest(phone=group.group_jid, message=result.output)
-        )
-
-        # Send the summary to the community groups
-        community_groups = await group.get_related_community_groups(session)
-        for cg in community_groups:
+        # Send summary to the original group only if send_summary_to_self is True
+        if group.send_summary_to_self:
             await whatsapp.send_message(
-                SendMessageRequest(phone=cg.group_jid, message=result.output)
+                SendMessageRequest(phone=group.group_jid, message=result.output)
             )
+            logging.info(f"Sent summary to original group: {group.group_name}")
+
+        # Send the summary to community groups that are marked as summary receivers
+        # (i.e., groups with send_summary_to_self=True)
+        community_groups = await group.get_related_community_groups(session)
+        logging.info(f"Found {len(community_groups)} community groups for {group.group_name}")
+        for cg in community_groups:
+            # Only send to groups that want to receive summaries (send_summary_to_self=True)
+            if cg.send_summary_to_self:
+                logging.info(f"Sending summary from {group.group_name} to community group: {cg.group_name} (JID: {cg.group_jid})")
+                await whatsapp.send_message(
+                    SendMessageRequest(phone=cg.group_jid, message=result.output)
+                )
+                logging.info(f"Sent summary to community group: {cg.group_name}")
+            else:
+                logging.debug(f"Skipping community group {cg.group_name} (send_summary_to_self=False)")
 
     except Exception as e:
         logging.error("Error sending message to group %s: %s", group.group_name, e)
