@@ -42,7 +42,7 @@ class Settings(BaseSettings):
         if self.anthropic_api_key:
             environ["ANTHROPIC_API_KEY"] = self.anthropic_api_key
 
-        # if self.logfire_token:
-        #     environ["LOGFIRE_TOKEN"] = self.logfire_token
+        if self.logfire_token:
+            environ["LOGFIRE_TOKEN"] = self.logfire_token
 
         return self

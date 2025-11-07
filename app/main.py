@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlmodel.ext.asyncio.session import AsyncSession
 import logging
-# import logfire
+import logfire
 
 from api import load_new_kbtopics_api, status, summarize_and_send_to_group_api, webhook
 import models  # noqa
@@ -47,7 +47,7 @@ async def lifespan(app: FastAPI):
         pool_recycle=600,
         future=True,
     )
-    # logfire.instrument_sqlalchemy(engine)
+    logfire.instrument_sqlalchemy(engine)
     async_session = async_sessionmaker(
         engine, expire_on_commit=False, class_=AsyncSession
     )
@@ -173,11 +173,11 @@ async def lifespan(app: FastAPI):
 # Initialize FastAPI app
 app = FastAPI(title="Webhook API", lifespan=lifespan)
 
-# logfire.configure()
-# logfire.instrument_pydantic_ai()
-# logfire.instrument_fastapi(app)
-# logfire.instrument_httpx(capture_all=True)
-# logfire.instrument_system_metrics()
+logfire.configure()
+logfire.instrument_pydantic_ai()
+logfire.instrument_fastapi(app)
+logfire.instrument_httpx(capture_all=True)
+logfire.instrument_system_metrics()
 
 app.include_router(webhook.router)
 app.include_router(status.router)
