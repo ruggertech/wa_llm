@@ -47,7 +47,8 @@ async def lifespan(app: FastAPI):
         pool_recycle=600,
         future=True,
     )
-    logfire.instrument_sqlalchemy(engine)
+    if settings.logfire_token:
+        logfire.instrument_sqlalchemy(engine)
     async_session = async_sessionmaker(
         engine, expire_on_commit=False, class_=AsyncSession
     )
@@ -173,7 +174,20 @@ async def lifespan(app: FastAPI):
 # Initialize FastAPI app
 app = FastAPI(title="Webhook API", lifespan=lifespan)
 
-logfire.configure()
+# Configure Logfire (must happen at module level, not in lifespan)
+if settings.logfire_token:
+    logfire.configure(
+        token=settings.logfire_token,
+        service_name="whatsapp-bot",
+        send_to_logfire=True,
+        inspect_arguments=False
+    )
+    # Add Logfire handler to capture Python logging
+    root_logger = logging.getLogger()
+    root_logger.addHandler(logfire.LogfireLoggingHandler())
+else:
+    logfire.configure()
+
 logfire.instrument_pydantic_ai()
 logfire.instrument_fastapi(app)
 logfire.instrument_httpx(capture_all=True)
@@ -183,6 +197,17 @@ app.include_router(webhook.router)
 app.include_router(status.router)
 app.include_router(summarize_and_send_to_group_api.router)
 app.include_router(load_new_kbtopics_api.router)
+
+# Debug endpoint to check logging configuration
+@app.get("/debug/logging")
+async def debug_logging():
+    import logging
+    root_logger = logging.getLogger()
+    return {
+        "root_handlers": [{"type": type(h).__name__, "level": h.level} for h in root_logger.handlers],
+        "has_logfire_handler": any("Logfire" in type(h).__name__ for h in root_logger.handlers),
+        "logfire_configured": True  # If we got here, logfire was imported
+    }
 
 if __name__ == "__main__":
     import uvicorn

@@ -15,6 +15,7 @@ services:
     build: .
     volumes:
       - ./src:/app/src
+      - ./app:/app/app
       - ./migrations:/app/migrations
     env_file:
       - .env
