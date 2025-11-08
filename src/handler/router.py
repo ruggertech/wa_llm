@@ -70,9 +70,13 @@ def extract_message_count(text: str) -> int | None:
     text_lower = text.lower()
     
     # Check for digit numbers (e.g., "5", "10")
-    digit_match = re.search(r'\b(\d+)\b', text)
+    # Exclude phone numbers (numbers with 9+ digits) and @mentions
+    digit_match = re.search(r'(?<!@)\b(\d{1,2})\b(?!\d)', text)
     if digit_match:
-        return int(digit_match.group(1))
+        num = int(digit_match.group(1))
+        # Only return if it's a reasonable message count (1-100)
+        if 1 <= num <= 100:
+            return num
     
     # Check Hebrew number words
     for word, num in hebrew_numbers.items():
@@ -136,11 +140,6 @@ class Router(BaseHandler):
             # Summarize each group
             summaries = []
             for group in all_groups:
-                # Skip groups with send_summary_to_self=True if not the current group
-                # (those are summary-receiving groups, not source groups)
-                if group.group_jid != message.chat_jid and group.send_summary_to_self:
-                    continue
-                
                 # Skip current group if send_summary_to_self is False
                 # (this allows using a group as a "control panel" without including its messages)
                 if group.group_jid == message.chat_jid and not group.send_summary_to_self:
@@ -174,7 +173,7 @@ class Router(BaseHandler):
                     - Be specific about what each message said
                     - Keep it short and conversational
                     - Tag users when mentioning them
-                    - You MUST respond with the same language as the messages
+                    - CRITICAL: You MUST respond in the EXACT same language as the messages. If the messages are in Hebrew, respond ONLY in Hebrew. If the messages are in English, respond in English. Never translate or mix languages.
                     """
                 else:
                     system_prompt = f"""Summarize the following group chat messages in a few words.
@@ -182,7 +181,7 @@ class Router(BaseHandler):
                     - Start by stating this is a summary of "{group.group_name}" group
                     - Keep it short and conversational
                     - Tag users when mentioning them
-                    - You MUST respond with the same language as the messages
+                    - CRITICAL: You MUST respond in the EXACT same language as the messages. If the messages are in Hebrew, respond ONLY in Hebrew. If the messages are in English, respond in English. Never translate or mix languages.
                     """
                 
                 agent = Agent(
@@ -240,7 +239,7 @@ class Router(BaseHandler):
                 - Be specific about what each message said
                 - Keep it short and conversational
                 - Tag users when mentioning them
-                - You MUST respond with the same language as the request
+                - CRITICAL: You MUST respond in the EXACT same language as the messages. If the messages are in Hebrew, respond ONLY in Hebrew. If the messages are in English, respond in English. Never translate or mix languages.
                 """
             else:
                 system_prompt = """Summarize the following group chat messages in a few words.
@@ -249,7 +248,7 @@ class Router(BaseHandler):
                 - Always personalize the summary to the user's request
                 - Keep it short and conversational
                 - Tag users when mentioning them
-                - You MUST respond with the same language as the request
+                - CRITICAL: You MUST respond in the EXACT same language as the messages. If the messages are in Hebrew, respond ONLY in Hebrew. If the messages are in English, respond in English. Never translate or mix languages.
                 """
 
             agent = Agent(
