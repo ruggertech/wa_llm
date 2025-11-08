@@ -140,6 +140,11 @@ class Router(BaseHandler):
                 # (those are summary-receiving groups, not source groups)
                 if group.group_jid != message.chat_jid and group.send_summary_to_self:
                     continue
+                
+                # Skip current group if send_summary_to_self is False
+                # (this allows using a group as a "control panel" without including its messages)
+                if group.group_jid == message.chat_jid and not group.send_summary_to_self:
+                    continue
                     
                 time_24_hours_ago = datetime.now() - timedelta(hours=24)
                 stmt = (
