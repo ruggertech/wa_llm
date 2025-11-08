@@ -191,6 +191,8 @@ else:
 logfire.instrument_pydantic_ai()
 logfire.instrument_fastapi(app)
 logfire.instrument_httpx(capture_all=True)
+# Note: Voyage AI uses requests library, but instrument_requests() requires
+# opentelemetry-instrumentation-requests. Using explicit logging instead.
 logfire.instrument_system_metrics()
 
 app.include_router(webhook.router)
