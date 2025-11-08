@@ -1,0 +1,101 @@
+services:
+- type: web
+  name: go-whatsapp-web
+  runtime: image
+  image:
+    url: docker.io/aldinokemal2104/go-whatsapp-web-multidevice:v7.8.0
+  plan: starter
+  envVars:
+  - key: WHATSAPP_CHAT_STORAGE
+    sync: false
+  - key: DB_URI
+    sync: false
+  - key: APP_BASIC_AUTH
+    sync: false
+  - key: WHATSAPP_WEBHOOK
+    sync: false
+  - key: DB_KEYS_URI
+    sync: false
+  - key: APP_OS
+    sync: false
+  region: oregon
+  autoDeployTrigger: commit
+- type: pserv
+  name: wa_llm
+  runtime: docker
+  repo: https://github.com/ruggertech/wa_llm
+  plan: standard
+  envVars:
+  - key: WHATSAPP_BASIC_AUTH_USER
+    sync: false
+  - key: LOGFIRE_TOKEN
+    sync: false
+  - key: VOYAGE_API_KEY
+    sync: false
+  - key: WHATSAPP_BASIC_AUTH_PASSWORD
+    sync: false
+  - key: ANTHROPIC_API_KEY
+    sync: false
+  - key: WHATSAPP_HOST
+    sync: false
+  - key: MY_NUMBER
+    sync: false
+  - key: PORT
+    sync: false
+  - key: HOST
+    sync: false
+  - key: DB_URI
+    sync: false
+  region: oregon
+  dockerContext: .
+  dockerfilePath: ./Dockerfile
+  autoDeployTrigger: commit
+- type: cron
+  name: load_new_kbtopics
+  runtime: docker
+  repo: https://github.com/ruggertech/wa_llm
+  plan: starter
+  envVars:
+  - key: BASE_URL
+    sync: false
+  - key: LOGFIRE_TOKEN
+    sync: false
+  region: oregon
+  schedule: 0 2 * * *
+  dockerCommand: python app/load_new_kbtopics_task.py
+  dockerContext: .
+  dockerfilePath: ./Dockerfile
+  autoDeployTrigger: commit
+- type: cron
+  name: check_status
+  runtime: docker
+  repo: https://github.com/ruggertech/wa_llm
+  plan: starter
+  envVars:
+  - key: BASE_URL
+    sync: false
+  - key: LOGFIRE_TOKEN
+    sync: false
+  region: oregon
+  schedule: 0 * * * *
+  dockerCommand: python app/check_status.py
+  dockerContext: .
+  dockerfilePath: ./Dockerfile
+  autoDeployTrigger: commit
+- type: cron
+  name: summarize_and_send_to_groups
+  runtime: docker
+  repo: https://github.com/ruggertech/wa_llm
+  plan: starter
+  envVars:
+  - key: BASE_URL
+    sync: false
+  - key: LOGFIRE_TOKEN
+    sync: false
+  region: oregon
+  schedule: 0 16 * * *
+  dockerCommand: python app/summarize_and_send_to_groups_task.py
+  dockerContext: .
+  dockerfilePath: ./Dockerfile
+  autoDeployTrigger: commit
+version: "1"
